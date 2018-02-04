@@ -18,6 +18,11 @@ targetApk = '../app-release.apk'
 
 key = '{http://schemas.android.com/apk/res/android}name'
 
+key.alias.password=123123
+key.store.password=123123
+key.store="Everychange.key"
+key.alias="com.moe.omo"
+
 def unpack(src, dist):
     dist = os.path.join(dist, fileName(src))
 
