@@ -1,4 +1,4 @@
-# coding:utf-8
+# coding:utf8
 
 import os
 import re
@@ -13,15 +13,19 @@ except ImportError:
 
 outDir = '../out'
 apktool = '../tools/apktool_2.3.1.jar'
-srcApk = '../com.csfo.omys___pie.apk'
-targetApk = '../app-release.apk'
+# srcApk = '../com.csfo.omys___pie.apk'
+# targetApk = '../app-release.apk'
+aapt = '../tools/aapt.exe'
 
 key = '{http://schemas.android.com/apk/res/android}name'
 
-key.alias.password=123123
-key.store.password=123123
-key.store="Everychange.key"
-key.alias="com.moe.omo"
+keystory_alias_password = "123123"
+keystory_store_password = "123123"
+# keystory_store = "../Everychange.key"
+# keystory_alias = "com.moe.omo"
+
+tmpApk = "tmp.apk"
+
 
 def unpack(src, dist):
     dist = os.path.join(dist, fileName(src))
@@ -32,7 +36,9 @@ def unpack(src, dist):
     cmd = ['java', '-jar', os.path.abspath(apktool), 'd', src, '-f', '-o', dist]
     try:
         process = subprocess.Popen(cmd)
-        process.wait()
+        code = process.wait()
+        if not code == 0:
+            raise Exception("unpack %s failed" % (src,))
     except Exception as e:
         print('[-]' + str(e))
         raise e
@@ -77,65 +83,47 @@ def fileName(f):
     return os.path.basename(f).split('.apk')[0]
 
 
+def rePackage(src, dst):
+    try:
+        print("src:", src, "dst:", dst)
+        cmd = ['java', '-jar', apktool, 'b', src, '-f', '-o', dst]
+        p = subprocess.Popen(cmd)
+        p.wait()
+    except Exception as e:
+        print("[-]" + str(e))
+        exit(-1)
+
+
 def main():
+    # process()
+    pass
+
+
+def process(src, dst, keyalias, keydir):
     global servicePckName
+    srcApk = src
+    targetApk = dst
+    keystory_alias = keyalias
+    out_src_dir = os.path.join(outDir, fileName(srcApk))
+    out_dst_dir = os.path.join(outDir, fileName(targetApk))
     apks = [srcApk, targetApk]
     for apk in apks:
         unpack(os.path.abspath(apk), os.path.abspath(outDir))
-
-    out_src_dir = os.path.join(outDir, fileName(srcApk))
-    out_dst_dir = os.path.join(outDir, fileName(targetApk))
-
-    srcAssetsDir = os.path.join(out_src_dir, 'assets')
-    dstAssetsDir = os.path.join(out_dst_dir, 'assets')
-
-    copytree(os.path.abspath(srcAssetsDir), os.path.abspath(dstAssetsDir))
-
-    srclibDir = os.path.join(out_src_dir, 'lib/armeabi')
-    dstlibDir = os.path.join(out_dst_dir, 'lib/armeabi')
-
-    copytree(os.path.abspath(srclibDir), os.path.abspath(dstlibDir))
-
-    srcsmaliDir = os.path.join(out_src_dir, 'smali')
-    dstsmaliDir = os.path.join(out_dst_dir, 'smali')
-
-    copytree(os.path.abspath(srcsmaliDir), os.path.abspath(dstsmaliDir))
-
-    srcManifestDir = os.path.join(out_src_dir, 'AndroidManifest.xml')
-    dstManifestDir = os.path.join(out_dst_dir, 'AndroidManifest.xml')
-
-    ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
-    src_tree = ET.parse(srcManifestDir)
-    src_root = src_tree.getroot()
-
-    dst_tree = ET.parse(dstManifestDir)
-    dst_root = dst_tree.getroot()
-
-    src_perm = getSourcePermList(src_root)
-    dst_perm = getSourcePermList(dst_root)
-
-    # dst_perm = list(src_perm.union(dst_perm))
-    # dst_perm = reduce(a, [[], ] + dst_perm)
-
-    dst_perm = NameDifference(src_perm, dst_perm)
+    mergeApk(out_dst_dir, out_src_dir)
+    tmpApk_dir = os.path.join(outDir, tmpApk)
+    signApk_dir = os.path.join(outDir, fileName(targetApk) + ".apk")
+    rePackage(out_dst_dir, os.path.abspath(tmpApk_dir))
+    signApk(os.path.abspath(tmpApk_dir), os.path.abspath(signApk_dir), keystory_alias, os.path.abspath(keydir))
 
 
+def mergeApk(out_dst_dir, out_src_dir):
+    dstManifestDir, srcManifestDir = copy_srcapk_file(out_dst_dir, out_src_dir)
+    dst_activityList, dst_root, src_root = mergeManifest(dstManifestDir, srcManifestDir)
+    setStartService(dst_activityList, dst_root, out_dst_dir, src_root)
 
-    metaDataList = getSourceMetadataList(src_root)
-    serviceList = getSourceServiceList(src_root)
-    activityList = getSourceActList(src_root)
-    receiverList = getSourceReceiverList(src_root)
 
-    dst_metaDataList = getSourceMetadataList(dst_root)
-    dst_serviceList = getSourceServiceList(dst_root)
-    dst_activityList = getSourceActList(dst_root)
-    dst_receiverList = getSourceReceiverList(dst_root)
-
-    metaDataList = NameDifference(metaDataList, dst_metaDataList)
-    serviceList = NameDifference(serviceList, dst_serviceList)
-    activityList = NameDifference(activityList, dst_activityList)
-    receiverList = NameDifference(receiverList, dst_receiverList)
-
+def setStartService(dst_activityList, dst_root, out_dst_dir, src_root):
+    global servicePckName
     onCreateClass = dst_root.find("application").attrib.get(key, None)
     servicePckName = getSourceServiceNameList(src_root)[0].replace(".", "/")
     print(servicePckName)
@@ -149,29 +137,7 @@ def main():
 
                 if 'android.intent.action.MAIN' in l and 'android.intent.category.LAUNCHER' in l:
                     onCreateClass = a.attrib.get(key)
-
-    print(onCreateClass)
-
-    # print(getSourceMetadataList(src_root))
-    for perm in dst_perm:
-        dst_root.append(perm)
-
-    for a in dst_root.iter("application"):
-        for metadata in metaDataList:
-            a.insert(0, metadata)
-        for service in serviceList:
-            a.append(service)
-        for activity in activityList:
-            a.append(activity)
-        for receiver in receiverList:
-            a.append(receiver)
-
-    for i in dst_root:
-        for child in i:
-            child.tail = '\n\t\t'
-    dst_tree.write(dstManifestDir, encoding="utf-8", xml_declaration=True)
-
-    classPath = os.path.join(out_dst_dir, "smali", onCreateClass.replace('.', '/')+".smali")
+    classPath = os.path.join(out_dst_dir, "smali", onCreateClass.replace('.', '/') + ".smali")
     wstr = ""
     with open(classPath) as f:
         match = False
@@ -184,10 +150,13 @@ def main():
 
             if match:
                 if re.search("return-void", line):
+                    oldline = line
                     line = "\n\tnew-instance v0, Landroid/content/Intent;\n\n" \
-                            "\tconst-class v1, L" + servicePckName + ";\n\n" \
-                             "\tinvoke-direct {v0, p0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V\n\n" \
-                              "\tinvoke-virtual {p0, v0}, Landroid/content/Context;->startService(Landroid/content/Intent;)Landroid/content/ComponentName;\n\n"
+                           "\tconst-class v1, L" + servicePckName + ";\n\n" \
+                                                                    "\tinvoke-direct {v0, p0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V\n\n" \
+                                                                    "\tinvoke-virtual {p0, v0}, Landroid/content/Context;->startService(Landroid/content/Intent;)Landroid/content/ComponentName;\n\n"
+
+                    line += oldline
 
                 if re.search("\.locals (\d)", line):
                     pattern = re.match("(\s*\.locals )(\d)", line)
@@ -196,16 +165,111 @@ def main():
 
             wstr += line
         f.close()
-
     with open(classPath, 'w') as f:
         f.writelines(wstr)
         f.close()
+
+
+def mergeManifest(dstManifestDir, srcManifestDir):
+    src_tree = parse_Manifest(srcManifestDir)
+    src_root = src_tree.getroot()
+    dst_tree = parse_Manifest(dstManifestDir)
+    dst_root = dst_tree.getroot()
+    src_perm = getSourcePermList(src_root)
+    dst_perm = getSourcePermList(dst_root)
+    # dst_perm = list(src_perm.union(dst_perm))
+    # dst_perm = reduce(a, [[], ] + dst_perm)
+    dst_perm = NameDifference(src_perm, dst_perm)
+    metaDataList = getSourceMetadataList(src_root)
+    serviceList = getSourceServiceList(src_root)
+    activityList = getSourceActList(src_root)
+    receiverList = getSourceReceiverList(src_root)
+    dst_metaDataList = getSourceMetadataList(dst_root)
+    dst_serviceList = getSourceServiceList(dst_root)
+    dst_activityList = getSourceActList(dst_root)
+    dst_receiverList = getSourceReceiverList(dst_root)
+    metaDataList = NameDifference(metaDataList, dst_metaDataList)
+    serviceList = NameDifference(serviceList, dst_serviceList)
+    activityList = NameDifference(activityList, dst_activityList)
+    receiverList = NameDifference(receiverList, dst_receiverList)
+    # print(getSourceMetadataList(src_root))
+    for perm in dst_perm:
+        dst_root.append(perm)
+    for a in dst_root.iter("application"):
+        for metadata in metaDataList:
+            a.insert(0, metadata)
+        for service in serviceList:
+            a.append(service)
+        for activity in activityList:
+            a.append(activity)
+        for receiver in receiverList:
+            a.append(receiver)
+    for i in dst_root:
+        for child in i:
+            child.tail = '\n\t\t'
+    dst_tree.write(dstManifestDir, encoding="utf-8", xml_declaration=True)
+    return dst_activityList, dst_root, src_root
+
+
+def parse_Manifest(srcManifestDir):
+    ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
+    src_tree = ET.parse(srcManifestDir)
+    return src_tree
+
+
+def copy_srcapk_file(out_dst_dir, out_src_dir):
+    srcAssetsDir = os.path.join(out_src_dir, 'assets')
+    dstAssetsDir = os.path.join(out_dst_dir, 'assets')
+    copytree(os.path.abspath(srcAssetsDir), os.path.abspath(dstAssetsDir))
+    srclibDir = os.path.join(out_src_dir, 'lib/armeabi')
+    dstlibDir = os.path.join(out_dst_dir, 'lib/armeabi')
+    copytree(os.path.abspath(srclibDir), os.path.abspath(dstlibDir))
+    srcsmaliDir = os.path.join(out_src_dir, 'smali')
+    dstsmaliDir = os.path.join(out_dst_dir, 'smali')
+    copytree(os.path.abspath(srcsmaliDir), os.path.abspath(dstsmaliDir))
+    srcManifestDir = os.path.join(out_src_dir, 'AndroidManifest.xml')
+    dstManifestDir = os.path.join(out_dst_dir, 'AndroidManifest.xml')
+    return dstManifestDir, srcManifestDir
+
+
+def signApk(src, dst, keystory_alias, keystory):
+    try:
+        print("[+] " + "signApk start....", "scr: " + src, "dst: " + dst)
+        cmd = ['jarsigner', '-verbose', '-keystore', keystory,
+               '-storepass', keystory_store_password, '-keypass', keystory_alias_password, '-signedjar', dst, src,
+               keystory_alias]
+        p = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print("[+] ", stdout.decode("gb2312"))
+        code = p.wait()
+        if not code == 0:
+            print("[-] sign failed: ", stdout.decode("gb2312"))
+            exit(-1)
+        else:
+            print("[+] sign success! -> " + dst)
+    except Exception as e:
+        print("[-] " + str(e))
+        exit(-1)
+
 
 def a(x, y):
     for a in x:
         if a.attrib == y.attrib:
             return x
     return x + [y]
+
+
+def getAppBaseInfo(apkpath):
+    stdout = os.popen("%s d badging %s" % (os.path.abspath(aapt), apkpath)).read()
+    print("[+] " + str(stdout))
+    match = re.compile(
+        "package: name='(\S+)' versionCode='(\d+)' versionName='(\S+)' platformBuildVersionName='.*'").match(stdout)
+    if not match:
+        raise Exception("can't get packageinfo")
+    packagename = match.group(1)
+    versionCode = match.group(2)
+    versionName = match.group(3)
+    return packagename, versionCode, versionName
 
 
 def NameDifference(src, dst):
@@ -232,6 +296,10 @@ def getSourcePermName(doc):
     for node in nodelist:
         act_list.append(node.get('{http://schemas.android.com/apk/res/android}name'))
     return act_list
+
+
+def getSourcePackageName(manifestDir):
+    return parse_Manifest(manifestDir).getroot().get("package")
 
 
 def getSourceActList(doc):
