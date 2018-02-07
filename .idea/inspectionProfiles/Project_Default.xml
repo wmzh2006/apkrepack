@@ -5,6 +5,7 @@
       <option name="ignoredIdentifiers">
         <list>
           <option value="apkrepack" />
+          <option value="str.decode" />
         </list>
       </option>
     </inspection_tool>
