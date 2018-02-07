@@ -40,16 +40,19 @@ def main():
     options, args = parser.parse_args()
     print(args)
     cid = len(args) > 0 and args[0] or ""
+
+    onlybuildsdk = False
+    target = None
     if not options.apkPath:
-        print(parser.usage)
-        exit(0)
+        print("[+] just build sdk!")
+        onlybuildsdk = True
     else:
         target = options.apkPath
 
     if options.pkgname:
         pkgname = options.pkgname
     else:
-        pkgname = 'com.'+ranString(4, 5)+"."+ranString(4,5)+"."+ranString(4,5)
+        pkgname = ramdonPackName()
 
     targetPackageName = ""
     if options.re_pkgname:
@@ -59,16 +62,27 @@ def main():
 
     print(os.path.split(os.path.abspath(sys.argv[0]))[0])
 
-    if cid:
+    if cid and target:
         pkgname = targetPackageName and targetPackageName or apkrepack.getAppBaseInfo(target)[0]
 
     print("[*] " + "cid: " + cid + " pkgname: " + pkgname)
     apk_dir, packageName = buildSdk(pkgname, cid)
-    keystore_dir = os.path.join(os.path.dirname(sdkbuild), "Everychange.key")
-    apkrepack.process(apk_dir, target, packageName, keystore_dir, targetPackageName)
+    if not onlybuildsdk:
+        keystore_dir = os.path.join(os.path.dirname(sdkbuild), "Everychange.key")
+        apkrepack.process(apk_dir, target, packageName, keystore_dir, targetPackageName)
+
+
+def ramdonPackName():
+    pkgname = 'com'
+    l = random.randint(2, 3)
+    for i in range(l):
+        pkgname += '.' + ranString(4, 5)
+    return pkgname
+
 
 def ranString(s, t):
     return ''.join(random.sample(string.ascii_lowercase, random.randint(s, t)))
 
 if __name__ == '__main__':
     main()
+
