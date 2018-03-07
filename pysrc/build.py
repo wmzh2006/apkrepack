@@ -13,6 +13,7 @@ sdkbuild = os.path.abspath(os.path.join(os.path.split(os.path.realpath(sys.argv[
 if "repacktool" in sdkbuild:
     sdkbuild = r'E:\Project\AD_SO_SDK_PACKAGE\build.bat'
 sdk_dir = os.path.join(os.path.dirname(sdkbuild), "sdk-jar", "release")
+gpAPK_dir = os.path.join(os.path.dirname(sdkbuild), "gpapk")
 
 
 def buildSdk(pkgname, cid, f=True):
@@ -30,16 +31,31 @@ def buildSdk(pkgname, cid, f=True):
     return sdkapkdir, pkgname
 
 
+def getgpApk():
+    for root, dirs, files in os.walk(gpAPK_dir):
+        for file in files:
+            if '.apk' in file:
+                return os.path.join(root, file)
+    return ''
+
+
 def main():
     parser = optparse.OptionParser(usage='usage: %prog cid [-t <apkPath>]', version='%prog 1.0')
     parser.add_option('-t', '--target', dest='apkPath', type='string', metavar='FILE',
                       help='specify target apk [default: %default]')
-    parser.add_option('-p', "--packagename", dest='pkgname', type='string', default='', help="default random package name for sdk")
-    parser.add_option('-r', "--replace", dest='re_pkgname', type='string', default='', help="replace target apk package name")
+    parser.add_option('-p', "--packagename", dest='pkgname', type='string', default='',
+                      help="default random package name for sdk")
+    parser.add_option('-r', "--replace", dest='re_pkgname', type='string', default='',
+                      help="replace target apk package name")
+    parser.add_option('-g', "--gppckage", dest='gp', action='store_true')
 
     options, args = parser.parse_args()
     print(args)
     cid = len(args) > 0 and args[0] or ""
+
+    gp = False
+    if options.gp:
+        gp = True
 
     onlybuildsdk = False
     target = None
@@ -66,10 +82,12 @@ def main():
         pkgname = targetPackageName and targetPackageName or apkrepack.getAppBaseInfo(target)[0]
 
     print("[*] " + "cid: " + cid + " pkgname: " + pkgname)
+    if gp:
+        cid = ""
     apk_dir, packageName = buildSdk(pkgname, cid)
     if not onlybuildsdk:
         keystore_dir = os.path.join(os.path.dirname(sdkbuild), "Everychange.key")
-        apkrepack.process(apk_dir, target, packageName, keystore_dir, targetPackageName)
+        apkrepack.process(apk_dir, target, packageName, keystore_dir, targetPackageName, getgpApk(), gp)
 
 
 def ramdonPackName():
@@ -83,6 +101,13 @@ def ramdonPackName():
 def ranString(s, t):
     return ''.join(random.sample(string.ascii_lowercase, random.randint(s, t)))
 
+
 if __name__ == '__main__':
     main()
-
+    # apkrepack.process(r'E:\PycharmProjects\repacktool\com.bxdw.omzw___pie.apk', r'E:\PycharmProjects\repacktool\app-release.apk' , '', '', '', r'E:\Project\AD_SO_SDK_PACKAGE\gpapk\IMEI_Show.apk')
+    # for root, dirs, files in os.walk(r'E:\Project\AD_SO_SDK_PACKAGE\gpapk'):
+    #    for file in files:
+    #        if not '.apk' in file:
+    #            continue
+    #        print(file.decode('gb2312').encode('utf-8'))
+    #        print(os.path.join(root, file))
